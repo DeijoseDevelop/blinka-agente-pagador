@@ -1,0 +1,13 @@
+# Servicio Web (React + Vite, estatico via `serve`) — Railway
+# Root directory del servicio: / (monorepo compartido, npm workspaces)
+# Variables: VITE_API_URL (obligatoria, se inyecta en build), PORT (la inyecta Railway)
+
+[build]
+buildCommand = "npm run build:web"
+
+[deploy]
+startCommand = "npm run start:web"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

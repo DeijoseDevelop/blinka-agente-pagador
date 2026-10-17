@@ -112,7 +112,41 @@ npm run typecheck
 
 ---
 
-## 🔒 Aviso de seguridad
+## � Despliegue en producción (Railway)
+
+El monorepo se despliega como **un solo servicio**: la API (Fastify) sirve tanto la API REST (`/api/*`) como el frontend compilado (`apps/web/dist`). El `railway.toml` de la raíz ya lo deja configurado — conecta el repo y listo.
+
+### Pasos
+
+1. En Railway: `New Project → Deploy from GitHub` y selecciona este repositorio. Si Railway crea dos servicios por el auto-import de monorepo, quédate solo con el de la **API** (o crea el servicio a mano con *Root Directory* `/` — usará `railway.toml` por defecto).
+2. Genera el dominio público (*Settings → Networking → Generate Domain*). Listo: API + dashboard en el mismo dominio.
+3. Recomendado: define `GUARDIAN_HMAC_SECRET` en las variables del servicio.
+
+Config efectiva (de `railway.toml`, no hace falta tocarla):
+
+| Etapa | Comando |
+|---|---|
+| Build | `npm run build:web` (compila el frontend a `apps/web/dist`) |
+| Start | `npm run start:api` (sirve API + frontend en `$PORT`) |
+| Healthcheck | `/api/health` |
+
+### Variables de entorno
+
+| Variable | Descripción |
+|---|---|
+| `PORT` | Puerto de escucha. **Lo inyecta Railway automáticamente**; no lo definas. |
+| `GUARDIAN_HMAC_SECRET` | Secreto HMAC-SHA256 del Guardián. Sin definir usa `acme-eval-secret` (solo demo). |
+| `CORS_ORIGIN` | Orígenes permitidos separados por coma. Sin definir refleja cualquier origen (mismo origen no lo necesita). |
+
+Consulta `.env.example` para la lista completa. La versión de Node queda fijada en 22.x vía `engines` y `.nvmrc`.
+
+### Alternativa — dos servicios (web estática + API)
+
+Si prefieres servir el frontend como sitio estático aparte, crea un segundo servicio con *Root Directory* `/`, config path `apps/web/railway.toml`, build `npm run build:web` y start `npm run start:web` (`serve -s dist`). En ese caso define `VITE_API_URL=https://<dominio-de-la-api>` en el servicio web **antes del build** (Vite la embebe) y `CORS_ORIGIN` en la API con el dominio de la web.
+
+---
+
+## �🔒 Aviso de seguridad
 
 *Modo simulación.* Este sistema no transfiere dinero real. Todas las facturas y los proveedores son datos sintéticos. Las autorizaciones de pago son válidas únicamente dentro de esta demostración.
 

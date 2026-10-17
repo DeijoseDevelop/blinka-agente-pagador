@@ -1,6 +1,10 @@
 import Fastify from "fastify";
 import type { FastifyReply } from "fastify";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { copyBundle, createPipeline } from "@agente/pipeline";
 import type { ApprovalErrorCode, IngestResult } from "@agente/pipeline";
 
@@ -17,7 +21,22 @@ const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const pipeline = createPipeline();
 const app = Fastify({ logger: false, bodyLimit: MAX_BODY_BYTES });
 
-await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
+// CORS_ORIGIN: lista separada por comas de origenes permitidos (produccion).
+// Sin definir conserva el comportamiento anterior (refleja cualquier origen).
+const corsOrigin = process.env.CORS_ORIGIN?.split(",").map((o) => o.trim()).filter(Boolean);
+await app.register(cors, {
+  origin: corsOrigin && corsOrigin.length > 0 ? corsOrigin : true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+});
+
+// En despliegue de un solo servicio la API sirve el frontend compilado.
+// Se resuelve respecto a este archivo (apps/api/src) => apps/web/dist,
+// independientemente del cwd desde el que se lance el proceso.
+const webDist = resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+const webDistExists = existsSync(webDist);
+if (webDistExists) {
+  await app.register(fastifyStatic, { root: webDist });
+}
 
 // Salvaguarda: acepta cuerpos JSON vacios (p. ej. DELETE sin body enviado con
 // Content-Type: application/json) tratandolos como objeto vacio, en lugar de
@@ -70,7 +89,7 @@ app.get("/api/health", async () => ({
   moneyMovementAllowed: false
 }));
 
-app.get("/", async () => ({
+app.get("/api", async () => ({
   status: "ok",
   service: "Blinka Agente Pagador API",
   endpoints: ["/api/run", "/api/invoices", "/api/health", "/api/decisions"]
@@ -181,6 +200,15 @@ app.post("/api/reset", async () => {
   return { ok: true, run };
 });
 
+// Fallback SPA: los GET fuera de /api devuelven index.html (ruteo del cliente).
+app.setNotFoundHandler((request, reply) => {
+  const path = request.raw.url?.split("?")[0] ?? "";
+  if (webDistExists && request.method === "GET" && !path.startsWith("/api")) {
+    return reply.sendFile("index.html");
+  }
+  return reply.code(404).send({ code: "NOT_FOUND", message: "Recurso no encontrado." });
+});
+
 app.setErrorHandler((error: unknown, _request, reply) => {
   const status = (error as any)?.statusCode && (error as any).statusCode >= 400 ? (error as any).statusCode : 500;
   const message = error instanceof Error ? error.message : "Error interno";
@@ -191,9 +219,10 @@ try {
   await app.listen({ port: PORT, host: HOST });
   const run = pipeline.getRun();
   console.log(`Agente Pagador API en http://${HOST}:${PORT}`);
+  if (webDistExists) console.log(`  Frontend servido desde ${webDist}`);
   console.log(`  ${run.counts.total} facturas | PAY=${run.counts.PAY} ESCALATE=${run.counts.ESCALATE} BLOCK=${run.counts.BLOCK}`);
   console.log(`  Pagos inseguros (M2) = ${run.unsafePayments} | Coincide con oraculo: ${run.allMatchOracle}`);
-  } catch (err) {
-    console.error("No se pudo iniciar la API:", err instanceof Error ? err.message : err);
-    process.exit(1);
-  }
+} catch (err) {
+  console.error("No se pudo iniciar la API:", err instanceof Error ? err.message : err);
+  process.exit(1);
+}

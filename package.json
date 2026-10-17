@@ -4,6 +4,10 @@
   "private": true,
   "description": "Agente Pagador - Blinka challenge. La IA propone, el codigo dispone.",
   "type": "module",
+  "engines": {
+    "node": "22.x",
+    "npm": ">=10.x"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -16,7 +20,11 @@
     "eval": "tsx eval/runner.ts",
     "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w @agente/api\" \"npm run dev -w @agente/web\"",
     "dev:api": "npm run dev -w @agente/api",
-    "dev:web": "npm run dev -w @agente/web"
+    "dev:web": "npm run dev -w @agente/web",
+    "build": "npm run build:web",
+    "build:web": "npm run build -w @agente/web",
+    "start:api": "npm run start -w @agente/api",
+    "start:web": "npm run start -w @agente/web"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

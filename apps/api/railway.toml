@@ -1,0 +1,16 @@
+# Servicio API (Fastify) — Railway
+# Root directory del servicio: / (monorepo compartido, npm workspaces)
+# Variables: PORT (la inyecta Railway), GUARDIAN_HMAC_SECRET, CORS_ORIGIN (opcional)
+#
+# El build tambien compila el frontend: la API sirve apps/web/dist en runtime,
+# asi este servicio queda autocontenido (API + web en el mismo dominio).
+
+[build]
+buildCommand = "npm run build:web"
+
+[deploy]
+startCommand = "npm run start:api"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
