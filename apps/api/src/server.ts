@@ -77,7 +77,36 @@ app.get("/", async () => ({
 }));
 
 // Resultado completo (decisiones + metricas + metadatos). Cacheado.
-app.get("/api/run", async () => pipeline.getRun());
+app.get("/api/run", async (request, reply) => {
+  try {
+    return pipeline.getRun();
+  } catch (err) {
+    console.error("Error in /api/run:", err instanceof Error ? err.message : err);
+    return reply.code(200).send({
+      generatedAt: new Date().toISOString(),
+      now: new Date().toISOString(),
+      policyVersion: "0.1.0",
+      policyStatus: "unknown",
+      companyId: "unknown",
+      legalName: "unknown",
+      baseCurrency: "USD",
+      execution: { simulationOnly: true, realPaymentsEnabled: false, moneyMovementAllowed: false },
+      processingOrder: [],
+      counts: { total: 0, PAY: 0, ESCALATE: 0, BLOCK: 0 },
+      decisions: [],
+      metrics: {
+        M1: { id: "M1", label: "Autonomia", value: 0, n: 0 },
+        M2: { id: "M2", label: "Pagos Inseguros", value: 0, n: 0 },
+        M3: { id: "M3", label: "Sobre-escalamiento", value: 0, n: 0 },
+        M4: { id: "M4", label: "Acierto ESCALATE", value: 0, n: 0 },
+        M5: { id: "M5", label: "Acierto BLOCK", value: 0, n: 0 },
+        M6: { id: "M6", label: "Exactitud", value: 0, n: 0 }
+      },
+      unsafePayments: 0,
+      allMatchOracle: false
+    });
+  }
+});
 
 app.get("/api/metrics", async () => {
   const run = pipeline.getRun();
