@@ -70,6 +70,12 @@ app.get("/api/health", async () => ({
   moneyMovementAllowed: false
 }));
 
+app.get("/", async () => ({
+  status: "ok",
+  service: "Blinka Agente Pagador API",
+  endpoints: ["/api/run", "/api/invoices", "/api/health", "/api/decisions"]
+}));
+
 // Resultado completo (decisiones + metricas + metadatos). Cacheado.
 app.get("/api/run", async () => pipeline.getRun());
 
