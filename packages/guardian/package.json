@@ -1,0 +1,16 @@
+{
+  "name": "@agente/guardian",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agente/schemas": "*",
+    "@agente/engine": "*",
+    "decimal.js": "^10.4.3"
+  }
+}

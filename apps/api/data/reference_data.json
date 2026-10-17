@@ -1,0 +1,79 @@
+﻿{
+  "dataset_version": "0.1.0",
+  "company": {
+    "company_id": "ACME-LABS",
+    "legal_name": "Acme Labs Inc.",
+    "fictional": true,
+    "base_currency": "USD"
+  },
+  "suppliers": [
+    {
+      "supplier_id": "SUP-001",
+      "name": "CloudNova Technologies",
+      "category": "cloud_infrastructure",
+      "budget_category": "cloud",
+      "contract_ids": ["CN-001"],
+      "verification_status": "verified",
+      "registered_bank_account": "SYNTHETIC-ACCOUNT-CLOUD-001",
+      "expected_amount": "1200.00",
+      "currency": "USD"
+    },
+    {
+      "supplier_id": "SUP-002",
+      "name": "DataBridge Consulting",
+      "category": "professional_services",
+      "budget_category": "tech_consulting",
+      "contract_ids": ["DB-001"],
+      "verification_status": "verified",
+      "registered_bank_account": "SYNTHETIC-ACCOUNT-DATA-002",
+      "expected_amount": "8000.00",
+      "currency": "USD"
+    }
+  ],
+  "contracts": [
+    {
+      "contract_id": "CN-001",
+      "supplier_id": "SUP-001",
+      "budget_category": "cloud",
+      "amount": "1200.00",
+      "currency": "USD",
+      "tolerance_pct": "2.00",
+      "min_allowed": "1176.00",
+      "max_allowed": "1224.00",
+      "valid_from": "2026-01-01",
+      "valid_to": "2026-12-31"
+    },
+    {
+      "contract_id": "DB-001",
+      "supplier_id": "SUP-002",
+      "budget_category": "tech_consulting",
+      "amount": "8000.00",
+      "currency": "USD",
+      "tolerance_pct": "2.00",
+      "min_allowed": "7840.00",
+      "max_allowed": "8160.00",
+      "valid_from": "2026-01-01",
+      "valid_to": "2026-12-31"
+    }
+  ],
+  "budgets": [
+    {
+      "budget_id": "BUD-2026-10-GENERAL",
+      "scope": "general",
+      "limit": "120000.00",
+      "previously_committed": "40000.00"
+    },
+    {
+      "budget_id": "BUD-2026-10-CLOUD",
+      "scope": "cloud",
+      "limit": "30000.00",
+      "previously_committed": "10000.00"
+    },
+    {
+      "budget_id": "BUD-2026-10-CONSULTING",
+      "scope": "tech_consulting",
+      "limit": "25000.00",
+      "previously_committed": "5000.00"
+    }
+  ]
+}

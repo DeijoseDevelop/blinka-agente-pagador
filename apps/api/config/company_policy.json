@@ -1,0 +1,49 @@
+﻿{
+  "policy_version": "0.1.0",
+  "policy_status": "draft_pending_owner_approval",
+  "company_id": "ACME-LABS",
+  "environment": "synthetic_demo",
+  "base_currency": "USD",
+  "supported_currencies": ["USD", "COP", "MXN", "BRL", "EUR"],
+  "decision_precedence": ["BLOCK", "ESCALATE", "PAY"],
+  "decisions": {
+    "PAY": { "label_en": "PAY", "label_es": "PAGAR", "meaning": "Eligible for simulation after all validations pass" },
+    "ESCALATE": { "label_en": "ESCALATE", "label_es": "ESCALAR", "meaning": "Requires human review or approval" },
+    "BLOCK": { "label_en": "BLOCK", "label_es": "FRENAR", "meaning": "Violates a mandatory rule or cannot be processed safely" }
+  },
+  "limits": {
+    "auto_approval_threshold": "5000.00",
+    "hard_cap_per_invoice": "50000.00",
+    "contract_variance_tolerance_pct": "2.00",
+    "contract_tolerance_symmetric": true,
+    "min_extraction_confidence": "0.85"
+  },
+  "budgets": {
+    "period": "2026-10",
+    "general_monthly_limit": "120000.00",
+    "category_monthly_limits": {
+      "cloud": "30000.00",
+      "tech_consulting": "25000.00"
+    },
+    "accounting_model": {
+      "category_budgets_are_subsets_of_general": true,
+      "single_commitment_record_per_invoice": true,
+      "commit_on": "simulated_pay_or_approved_simulation",
+      "pending_escalation_consumes_budget": false,
+      "revalidate_on_approval": true
+    },
+    "supplier_category_to_budget": {
+      "cloud_infrastructure": "cloud",
+      "professional_services": "tech_consulting"
+    }
+  },
+  "approval_matrix": [
+    { "role": "Finance Lead", "min_amount_exclusive": "5000.00", "max_amount_inclusive": "15000.00" },
+    { "role": "CFO", "min_amount_exclusive": "5000.00", "max_amount_inclusive": "50000.00" }
+  ],
+  "execution": {
+    "real_payments_enabled": false,
+    "simulation_only": true,
+    "money_movement_allowed": false
+  }
+}

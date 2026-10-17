@@ -1,0 +1,29 @@
+﻿{
+  "dataset_version": "0.1.0",
+  "processing_order": ["INV-001", "INV-002", "INV-003"],
+  "results": [
+    {
+      "invoice_id": "INV-001",
+      "expected_decision": "PAY",
+      "expected_status": "SIMULATION_ELIGIBLE",
+      "expected_reason_codes": ["ALL_CHECKS_PASSED"],
+      "simulation_allowed": true
+    },
+    {
+      "invoice_id": "INV-002",
+      "expected_decision": "ESCALATE",
+      "expected_status": "PENDING_HUMAN_APPROVAL",
+      "expected_reason_codes": ["ABOVE_AUTO_THRESHOLD"],
+      "required_approver_role": "Finance Lead",
+      "simulation_allowed": false
+    },
+    {
+      "invoice_id": "INV-003",
+      "expected_decision": "BLOCK",
+      "expected_status": "BLOCKED",
+      "expected_reason_codes": ["DUPLICATE_CONFIRMED"],
+      "duplicate_of": "INV-001",
+      "simulation_allowed": false
+    }
+  ]
+}

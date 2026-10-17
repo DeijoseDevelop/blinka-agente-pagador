@@ -1,0 +1,62 @@
+{
+  "dataset_version": "0.1.0",
+  "invoices": [
+    {
+      "id": "INV-001",
+      "supplier_id": "SUP-001",
+      "supplier_name": "CloudNova Technologies",
+      "invoice_number": "CN-2026-104",
+      "contract_id": "CN-001",
+      "issue_date": "2026-10-05",
+      "due_date": "2026-10-30",
+      "currency": "USD",
+      "subtotal": "1200.00",
+      "tax": "0.00",
+      "total": "1200.00",
+      "bank_account": "SYNTHETIC-ACCOUNT-CLOUD-001",
+      "budget_category": "cloud",
+      "source_pdf": {
+        "path": "data/pdfs/INV-001.pdf",
+        "sha256": "9483dbc6f9526e8caa354668cd4f44ff7cda00a951d3b61457070056dc3f05cd"
+      }
+    },
+    {
+      "id": "INV-002",
+      "supplier_id": "SUP-002",
+      "supplier_name": "DataBridge Consulting",
+      "invoice_number": "DB-2026-208",
+      "contract_id": "DB-001",
+      "issue_date": "2026-10-08",
+      "due_date": "2026-10-31",
+      "currency": "USD",
+      "subtotal": "8000.00",
+      "tax": "0.00",
+      "total": "8000.00",
+      "bank_account": "SYNTHETIC-ACCOUNT-DATA-002",
+      "budget_category": "tech_consulting",
+      "source_pdf": {
+        "path": "data/pdfs/INV-002.pdf",
+        "sha256": "884146aff0ba3c059761f40a27302d98d81c2e67fa3f577a1a6849aef26f5554"
+      }
+    },
+    {
+      "id": "INV-003",
+      "supplier_id": "SUP-001",
+      "supplier_name": "CloudNova Technologies",
+      "invoice_number": "CN-2026-104",
+      "contract_id": "CN-001",
+      "issue_date": "2026-10-05",
+      "due_date": "2026-10-30",
+      "currency": "USD",
+      "subtotal": "1200.00",
+      "tax": "0.00",
+      "total": "1200.00",
+      "bank_account": "SYNTHETIC-ACCOUNT-CLOUD-001",
+      "budget_category": "cloud",
+      "source_pdf": {
+        "path": "data/pdfs/INV-003.pdf",
+        "sha256": "a8e8078049466d65b8950a6dfe5833871fe92484384dfc77a9f453580aa899dd"
+      }
+    }
+  ]
+}
