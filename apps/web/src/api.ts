@@ -25,11 +25,13 @@ export class ApiRequestError extends Error {
   }
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     const headers: HeadersInit = init?.body != null ? { "Content-Type": "application/json" } : {};
-    res = await fetch(`/api${path}`, {
+    res = await fetch(`${API_BASE}/api${path}`, {
       ...init,
       headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) }
     });

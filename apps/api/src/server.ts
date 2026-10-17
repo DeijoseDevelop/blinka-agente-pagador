@@ -10,8 +10,8 @@ import type { ApprovalErrorCode, IngestResult } from "@agente/pipeline";
  * autorizacion firmada para SIMULACION.
  */
 
-const PORT = Number(process.env.PORT ?? 8787);
-const HOST = process.env.HOST ?? "127.0.0.1";
+const PORT = Number(process.env.PORT) || 8787;
+const HOST = "0.0.0.0";
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
 const pipeline = createPipeline();
