@@ -35,7 +35,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
       headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) }
     });
-  } catch {
+  } catch (err) {
+    console.error("API request failed", err);
     throw new ApiRequestError(
       { code: "NETWORK", message: "No fue posible contactar al servicio. Intente nuevamente." },
       0
