@@ -17,7 +17,7 @@ const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const pipeline = createPipeline();
 const app = Fastify({ logger: false, bodyLimit: MAX_BODY_BYTES });
 
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: true, methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] });
 
 // Salvaguarda: acepta cuerpos JSON vacios (p. ej. DELETE sin body enviado con
 // Content-Type: application/json) tratandolos como objeto vacio, en lugar de

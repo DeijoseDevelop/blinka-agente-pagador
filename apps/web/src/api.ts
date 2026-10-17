@@ -25,7 +25,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
+const API_BASE = (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || "https://agenteapi-production-e471.up.railway.app").replace(/\/+$/, "");
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
