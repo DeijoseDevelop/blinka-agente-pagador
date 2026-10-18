@@ -157,10 +157,13 @@ export function extractPdfText(bytes: Buffer): string {
   return chunks.join("\n").trim();
 }
 
+/** Tope de salida al inflar streams de un PDF (defensa ante zip-bomb). */
+const MAX_INFLATED_BYTES = 16 * 1024 * 1024;
+
 function tryDecodeStream(raw: Buffer): string | null {
   const attempt = (buffer: Buffer): string | null => {
     try {
-      const inflated = inflateSync(buffer);
+      const inflated = inflateSync(buffer, { maxOutputLength: MAX_INFLATED_BYTES });
       return inflated.toString("latin1");
     } catch {
       return null;
@@ -240,22 +243,34 @@ export function normalizeNumber(token: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-/** Normaliza fechas iso / dd-mm-yyyy / dd-mmm-yyyy. */
+/** Comprueba que y-m-d sea una fecha de calendario real (rechaza 2026-13-99). */
+function validYMD(year: number, month: number, day: number): boolean {
+  if (year < 1900 || year > 2200 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
+  );
+}
+
+/** Normaliza fechas iso / dd-mm-yyyy / dd-mmm-yyyy. Devuelve null si no es real. */
 export function normalizeDate(token: string): string | null {
   const value = token.trim();
   const iso = value.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (iso) return `${iso[1]}-${pad2(iso[2]!)}-${pad2(iso[3]!)}`;
+  if (iso) {
+    const [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+    return validYMD(y, m, d) ? `${iso[1]}-${pad2(iso[2]!)}-${pad2(iso[3]!)}` : null;
+  }
   const dmy = value.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
   if (dmy) {
-    const year = dmy[3]!.length === 2 ? `20${dmy[3]}` : dmy[3]!;
-    return `${year}-${pad2(dmy[2]!)}-${pad2(dmy[1]!)}`;
+    const [d, m, y] = [Number(dmy[1]), Number(dmy[2]), Number(dmy[3]!.length === 2 ? `20${dmy[3]}` : dmy[3])];
+    return validYMD(y, m, d) ? `${y}-${pad2(dmy[2]!)}-${pad2(dmy[1]!)}` : null;
   }
   const textual = value.match(/(\d{1,2})[\s-]*([a-zA-ZÃ¡Ã©Ã­Ã³Ãº]{3})[a-zA-Z]*[\s,-]*(\d{2,4})/);
   if (textual) {
     const month = MONTH_NAMES[textual[2]!.toLowerCase()];
     if (month) {
-      const year = textual[3]!.length === 2 ? `20${textual[3]}` : textual[3]!;
-      return `${year}-${month}-${pad2(textual[1]!)}`;
+      const [d, y] = [Number(textual[1]), Number(textual[3]!.length === 2 ? `20${textual[3]}` : textual[3])];
+      return validYMD(y, Number(month), d) ? `${y}-${month}-${pad2(textual[1]!)}` : null;
     }
   }
   return null;
@@ -294,7 +309,14 @@ const INJECTION_PATTERNS = [
   /(?:system|developer)\s+prompt/i,
   /paga(?:r)?\s+(?:directamente|sin\s+(?:revisi[oÃ³]n|validar))/i,
   /autoriza(?:r)?\s+(?:el\s+)?pago\s+(?:directamente|sin)/i,
-  /override\s+(?:the\s+)?(?:rules|policy|guards?)/i
+  /override\s+(?:the\s+)?(?:rules|policy|guards?)/i,
+  /aprobar?\s+(?:este|el|la|esta)\s+(?:pago|factura|cobro)/i,
+  /approve\s+(?:this|the)\s+(?:payment|invoice|charge)/i,
+  /mark\s+(?:this|it|the\s+invoice)\s+as\s+(?:paid|approved|verified)/i,
+  /skip\s+(?:the\s+)?(?:review|validation|verification|checks?)/i,
+  /bypass\s+(?:the\s+)?(?:rules|policy|review|checks?)/i,
+  /do\s+not\s+(?:review|verify|validate|check)\s+(?:this|the)/i,
+  /no\s+(?:verifiques|revises|valides)\s+(?:esta|este|el|la)/i
 ];
 
 function hasInjectionSignal(text: string): boolean {

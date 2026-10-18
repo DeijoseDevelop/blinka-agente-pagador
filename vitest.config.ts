@@ -11,7 +11,7 @@ export default defineConfig({
     }
   },
   test: {
-    include: ["packages/**/*.test.ts", "eval/**/*.test.ts"],
+    include: ["packages/**/*.test.ts", "eval/**/*.test.ts", "tests/**/*.test.ts"],
     environment: "node",
     globals: false
   }

@@ -1,9 +1,9 @@
 import { decide } from "@agente/engine";
 import type { DecisionOutcome, RuleContext } from "@agente/engine";
-import { createGuardian } from "@agente/guardian";
+import { createGuardian, DEV_FALLBACK_SECRET } from "@agente/guardian";
 import type { Guardian, GuardianAlert } from "@agente/guardian";
-import { Decimal } from "@agente/schemas";
-import type { Approval, ExtractedInvoice, LedgerEntry } from "@agente/schemas";
+import { Decimal, canonicalize, sha256Hex } from "@agente/schemas";
+import type { Approval, ExtractedInvoice, LedgerEntry, PaymentAuthorization } from "@agente/schemas";
 import { buildCompany, invoiceToExtracted, pdfFileHash } from "./adapters.js";
 import type { OfficialInvoice, OfficialInvoices, OfficialPolicy, OfficialReference } from "./adapters.js";
 import { businessCopy, UI_COPY } from "./copy.js";
@@ -24,7 +24,8 @@ import { computeMetrics } from "./metrics.js";
 import type { Metrics, ProcessedResult } from "./metrics.js";
 
 export const DEFAULT_NOW = "2026-10-15T12:00:00.000Z";
-const APPROVAL_TTL_MS = 7 * 86_400_000;
+/** Caducidad de una aprobacion humana: 72 h (documento maestro §11). */
+const APPROVAL_TTL_MS = 72 * 3_600_000;
 /** Primera secuencia para facturas subidas (INV-004 en adelante). */
 const FIRST_INGESTED_SEQ = 4;
 
@@ -166,6 +167,14 @@ export interface Pipeline {
   getMetrics(): Metrics;
   ingest(input: IngestInput): IngestResult;
   reset(): RunResult;
+  /** Politica oficial y su traduccion al modelo del motor. */
+  getPolicy(): { official: OfficialPolicy; engine: ReturnType<typeof buildCompany>["policy"] };
+  /** Cola de aprobacion humana: decisiones escaladas pendientes. */
+  getApprovals(): DecisionView[];
+  /** Re-ejecuta la decision con los insumos guardados (prueba de determinismo). */
+  replayDecision(invoiceId: string): ReplayResult | null;
+  /** Cadena de auditoria encadenada por hash y su verificacion. */
+  getAudit(): AuditReport;
 }
 
 export interface PipelineOptions {
@@ -222,8 +231,40 @@ interface SessionRecord {
 }
 
 type StoredApproval =
-  | { kind: "approved"; approval: Approval }
+  | { kind: "approved"; approval: Approval; authorization: PaymentAuthorization }
   | { kind: "rejected"; comment: string; at: string };
+
+/** Evento de la cadena de auditoria encadenada por hash (documento §10). */
+export interface AuditEvent {
+  seq: number;
+  kind: "decision" | "approval" | "rejection";
+  invoiceId: string;
+  payload: Record<string, unknown>;
+  prevHash: string;
+  hash: string;
+}
+
+export interface AuditReport {
+  valid: boolean;
+  checked: number;
+  brokenAt: number | null;
+  events: AuditEvent[];
+}
+
+export interface ReplayResult {
+  ok: true;
+  invoiceId: string;
+  /** true si la re-ejecucion produce exactamente la misma decision y traza. */
+  deterministic: boolean;
+  original: { decision: OfficialDecision; contextSnapshotHash: string };
+  replayed: { decision: OfficialDecision; contextSnapshotHash: string };
+}
+
+const AUDIT_GENESIS = "GENESIS";
+
+function auditHash(prevHash: string, payload: Record<string, unknown>): string {
+  return sha256Hex(prevHash + canonicalize(payload));
+}
 
 /**
  * Crea el pipeline completo: carga datos oficiales, procesa las facturas en orden,
@@ -250,7 +291,7 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
   }
 
   const guardian: Guardian = createGuardian({
-    secret: options.guardianSecret ?? process.env.GUARDIAN_HMAC_SECRET ?? "acme-eval-secret"
+    secret: options.guardianSecret ?? process.env.GUARDIAN_HMAC_SECRET ?? DEV_FALLBACK_SECRET
   });
 
   const suppliers: readonly SupplierRef[] = reference.suppliers.map((s) => ({
@@ -273,6 +314,7 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
   const outcomes = new Map<string, DecisionOutcome>();
   const invoiceMap = new Map<string, SessionRecord>();
   let companyRef: ReturnType<typeof buildCompany>;
+  let auditEvents: AuditEvent[] = [];
   let run: RunResult | undefined;
   let dirty = true;
 
@@ -327,6 +369,10 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
   function findDuplicate(rec: { fileHash: string; invoiceNumber: string; supplierName: string; total: string }): SessionRecord | undefined {
     for (const id of order) {
       const existing = records.get(id)!;
+      // Un registro ya FRENADO o RECHAZADO no bloquea un reenvio corregido:
+      // el documento §11 exige corregir en origen y reenviar como version nueva.
+      const prior = decisionViews.get(id);
+      if (prior && (prior.decision === "BLOCK" || prior.status === "REJECTED")) continue;
       if (existing.fileHash === rec.fileHash) return existing;
       if (
         rec.invoiceNumber &&
@@ -355,10 +401,17 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
     decisionViews.clear();
     outcomes.clear();
     invoiceMap.clear();
+    auditEvents = [];
 
     const company = buildCompany(officialPolicy, reference);
     const decisions: DecisionView[] = [];
     const processed: ProcessedResult[] = [];
+    let prevHash = AUDIT_GENESIS;
+    const pushAudit = (kind: AuditEvent["kind"], invoiceId: string, payload: Record<string, unknown>): void => {
+      const hash = auditHash(prevHash, payload);
+      auditEvents.push({ seq: auditEvents.length + 1, kind, invoiceId, payload, prevHash, hash });
+      prevHash = hash;
+    };
 
     for (const id of order) {
       const rec = records.get(id);
@@ -379,7 +432,26 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
       };
 
       const outcome = decide(ctx);
-      const decision = toOfficialDecision(outcome.decision);
+
+      // Guardian: para PAY (o aprobaciones almacenadas) emite autorizacion firmada.
+      // La decision EFECTIVA es la que devuelve el guardian, no la del motor:
+      // si el guardian degrada (GUARDIAN_MISMATCH), la vista jamas muestra PAY.
+      const stored = approvalsById.get(id);
+      const guardApproval = stored && stored.kind === "approved" ? stored.approval : null;
+      const guardOutcome: DecisionOutcome =
+        guardApproval ? { ...outcome, decision: "PAGAR" } : outcome;
+      const guarded = guardian.guard({
+        decision_id: `dec_${id}`,
+        outcome: guardOutcome,
+        policy: company.policy,
+        extractionValidated: true,
+        approval: guardApproval,
+        beneficiary_id: rec.supplierId,
+        origin: guardApproval ? "approval" : "engine",
+        now
+      });
+
+      const decision = toOfficialDecision(guardApproval ? outcome.decision : guarded.decision);
       const reasonCodes = reasonCodesFor(outcome.rules);
       const approver = decision === "ESCALATE" ? approverRoleFor(Number(outcome.amounts.base_usd), company.policy) : null;
       const sim = simulationAllowed(decision);
@@ -404,22 +476,6 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
         sameCodes(reasonCodes, expected.expected_reason_codes) &&
         sim === expected.simulation_allowed &&
         (!expected.required_approver_role || approver === expected.required_approver_role);
-
-      // Guardian: para PAY (o aprobaciones re-almacenadas) emite autorizacion firmada.
-      const stored = approvalsById.get(id);
-      const guardApproval = stored && stored.kind === "approved" ? stored.approval : null;
-      const guardOutcome: DecisionOutcome =
-        guardApproval ? { ...outcome, decision: "PAGAR" } : outcome;
-      const guarded = guardian.guard({
-        decision_id: `dec_${id}`,
-        outcome: guardOutcome,
-        policy: company.policy,
-        extractionValidated: true,
-        approval: guardApproval,
-        beneficiary_id: rec.supplierId,
-        origin: guardApproval ? "approval" : "engine",
-        now
-      });
 
       const view: DecisionView = {
         invoiceId: id,
@@ -475,14 +531,17 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
       };
 
       // Replay de aprobaciones humanas almacenadas (se conservan entre recalculos).
+      // La firma mostrada es la de la autorizacion ORIGINAL emitida al aprobar:
+      // re-verificar no re-emite una autorizacion distinta en cada recalculo.
       if (stored) {
-        if (stored.kind === "approved" && guarded.verified && guarded.authorization) {
+        if (stored.kind === "approved" && guarded.verified) {
+          const authorization = stored.authorization;
           view.status = "APPROVED_FOR_SIMULATION";
           view.simulationAllowed = true;
           view.guardian = {
             verified: true,
             mismatch: false,
-            signature: guarded.authorization.signature,
+            signature: authorization.signature,
             alerts: []
           };
           view.approval = {
@@ -491,7 +550,7 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
             comment: stored.approval.comment,
             status: "APPROVED_FOR_SIMULATION",
             at: stored.approval.approved_at,
-            signature: guarded.authorization.signature
+            signature: authorization.signature
           };
           company.ledger.push({
             invoice_id: id,
@@ -500,7 +559,7 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
             invoice_number: rec.invoiceNumber || null,
             concept: rec.category,
             amount_base_usd: Number(outcome.amounts.base_usd),
-            file_hash: outcome.context_snapshot_hash,
+            file_hash: fileHash,
             date: rec.issueDate,
             decision: "PAGAR"
           });
@@ -538,6 +597,35 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
       invoiceMap.set(id, rec);
       decisions.push(view);
       processed.push({ invoice_id: id, decision, expected: expected?.expected_decision ?? null });
+
+      // Cadena de auditoria (solo anexar): cada decision queda encadenada.
+      pushAudit("decision", id, {
+        decision_id: view.decisionId,
+        invoice_id: id,
+        decision: view.decision,
+        status: view.status,
+        reason_codes: view.reasonCodes,
+        policy_version: officialPolicy.policy_version,
+        context_snapshot_hash: outcome.context_snapshot_hash,
+        guardian_signature: view.guardian.signature
+      });
+      if (stored?.kind === "approved" && view.approval) {
+        pushAudit("approval", id, {
+          approval_id: view.approval.approvalId,
+          invoice_id: id,
+          actor: view.approval.actor,
+          status: view.approval.status,
+          at: view.approval.at,
+          signature: view.approval.signature
+        });
+      } else if (stored?.kind === "rejected" && view.approval) {
+        pushAudit("rejection", id, {
+          approval_id: view.approval.approvalId,
+          invoice_id: id,
+          comment: stored.comment,
+          at: stored.at
+        });
+      }
     }
 
     companyRef = company;
@@ -586,27 +674,45 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
     const inv = invoiceMap.get(invoiceId);
     const outcome = outcomes.get(invoiceId);
     if (!view || !inv || !outcome) return fail("NOT_FOUND");
-    if (view.decision !== "ESCALATE") return fail("NOT_ESCALATABLE");
+    // Una factura ya resuelta (aprobada o rechazada) no admite una segunda
+    // resolucion: evita doble firma, doble asiento y doble gasto.
+    if (approvalsById.has(invoiceId)) return fail("NOT_ESCALATABLE");
+    if (view.decision !== "ESCALATE" || view.status === "APPROVED_FOR_SIMULATION" || view.status === "REJECTED") {
+      return fail("NOT_ESCALATABLE");
+    }
 
     const trimmed = (comment ?? "").trim();
     if (!role || trimmed.length === 0) return fail("MISSING_FIELDS");
     if (trimmed.length < 5) return fail("COMMENT_TOO_SHORT");
     if (!view.allowedRoles.includes(role)) return fail("ROLE_NOT_AUTHORIZED");
 
+    // Re-evaluacion al aprobar (documento §11): el motor y el guardian vuelven a
+    // verificar contra el CONTEXTO ACTUAL (libro, presupuesto, duplicados), no
+    // contra el resultado cacheado de cuando la factura se escalo.
+    const freshOutcome = decide({
+      invoice: inv.extracted,
+      policy: companyRef.policy,
+      company: companyRef,
+      now,
+      fileHash: inv.fileHash,
+      findings: [],
+      approval: null
+    });
+
     const approvedAt = new Date(Date.parse(now)).toISOString();
     const expiresAt = new Date(Date.parse(now) + APPROVAL_TTL_MS).toISOString();
     const approval: Approval = {
       approval_id: `apr_${invoiceId}_${role.replace(/\s+/g, "_").toLowerCase()}`,
-      invoice_id: outcome.invoice_id,
+      invoice_id: freshOutcome.invoice_id,
       beneficiary_id: inv.supplierId,
-      amount_base_usd: Number(outcome.amounts.base_usd),
+      amount_base_usd: Number(freshOutcome.amounts.base_usd),
       actor: role,
       comment: trimmed,
       approved_at: approvedAt,
       expires_at: expiresAt
     };
 
-    const postApproval: DecisionOutcome = { ...outcome, decision: "PAGAR" };
+    const postApproval: DecisionOutcome = { ...freshOutcome, decision: "PAGAR" };
     const guarded = guardian.guard({
       decision_id: `dec_${invoiceId}_approved`,
       outcome: postApproval,
@@ -622,40 +728,17 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
       return fail("GUARDIAN_MISMATCH", guarded.alerts);
     }
 
-    approvalsById.set(invoiceId, { kind: "approved", approval });
+    approvalsById.set(invoiceId, { kind: "approved", approval, authorization: guarded.authorization });
 
-    view.status = "APPROVED_FOR_SIMULATION";
-    view.simulationAllowed = true;
-    view.guardian = {
-      verified: true,
-      mismatch: false,
-      signature: guarded.authorization.signature,
-      alerts: []
-    };
-    view.approval = {
-      approvalId: approval.approval_id,
-      actor: role,
-      comment: trimmed,
-      status: "APPROVED_FOR_SIMULATION",
-      at: approvedAt,
-      signature: guarded.authorization.signature
-    };
-
-    companyRef.ledger.push({
-      invoice_id: invoiceId,
-      beneficiary_id: inv.supplierId,
-      beneficiary_name: inv.supplierName,
-      invoice_number: inv.invoiceNumber || null,
-      concept: inv.category,
-      amount_base_usd: Number(outcome.amounts.base_usd),
-      file_hash: outcome.context_snapshot_hash,
-      date: inv.issueDate,
-      decision: "PAGAR"
-    });
+    // Recalculo determinista: la decision ya aprobada vuelve a pasar por motor y
+    // guardian con el libro actualizado (que ahora incluye este compromiso).
+    dirty = true;
+    const refreshedRun = ensure();
+    const refreshed = decisionViews.get(invoiceId) ?? refreshedRun.decisions.find((d) => d.invoiceId === invoiceId) ?? view;
 
     return {
       ok: true,
-      decision: view,
+      decision: refreshed,
       message: UI_COPY.approval.approvedToast.replace("{role}", role)
     };
   }
@@ -664,7 +747,10 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
     ensure();
     const view = decisionViews.get(invoiceId);
     if (!view) return fail("NOT_FOUND");
-    if (view.decision !== "ESCALATE") return fail("NOT_ESCALATABLE");
+    if (approvalsById.has(invoiceId)) return fail("NOT_ESCALATABLE");
+    if (view.decision !== "ESCALATE" || view.status === "APPROVED_FOR_SIMULATION" || view.status === "REJECTED") {
+      return fail("NOT_ESCALATABLE");
+    }
 
     const trimmed = (comment ?? "").trim();
     if (trimmed.length === 0) return fail("MISSING_FIELDS");
@@ -673,18 +759,11 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
     const at = new Date(Date.parse(now)).toISOString();
     approvalsById.set(invoiceId, { kind: "rejected", comment: trimmed, at });
 
-    view.status = "REJECTED";
-    view.simulationAllowed = false;
-    view.approval = {
-      approvalId: `rej_${invoiceId}`,
-      actor: "human",
-      comment: trimmed,
-      status: "REJECTED",
-      at,
-      signature: null
-    };
+    dirty = true;
+    ensure();
+    const refreshed = decisionViews.get(invoiceId) ?? view;
 
-    return { ok: true, decision: view, message: UI_COPY.approval.rejectedToast };
+    return { ok: true, decision: refreshed, message: UI_COPY.approval.rejectedToast };
   }
 
   function ingest(input: IngestInput): IngestResult {
@@ -764,6 +843,106 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
     return ensure();
   }
 
+  /** Contexto del motor para un registro sobre un estado de empresa dado. */
+  function ctxFor(rec: SessionRecord, company: ReturnType<typeof buildCompany>): RuleContext {
+    return {
+      invoice: rec.extracted,
+      policy: company.policy,
+      company,
+      now,
+      fileHash: rec.fileHash,
+      findings: [],
+      approval: null
+    };
+  }
+
+  /** Asiento de compromiso identico al que produce build() para un pago. */
+  function commitLedgerEntry(company: ReturnType<typeof buildCompany>, rec: SessionRecord, outcome: DecisionOutcome): void {
+    company.ledger.push({
+      invoice_id: rec.id,
+      beneficiary_id: rec.supplierId,
+      beneficiary_name: rec.supplierName,
+      invoice_number: rec.invoiceNumber || null,
+      concept: rec.category,
+      amount_base_usd: Number(outcome.amounts.base_usd),
+      file_hash: rec.fileHash,
+      date: rec.issueDate,
+      decision: "PAGAR"
+    });
+  }
+
+  /**
+   * Replay determinista: reconstruye el contexto en el que se decidio la factura
+   * (aplicando los compromisos de todas las anteriores en el orden de proceso) y
+   * vuelve a ejecutar el motor. Debe producir exactamente la misma decision.
+   */
+  function replayDecision(invoiceId: string): ReplayResult | null {
+    ensure();
+    const target = invoiceMap.get(invoiceId);
+    const original = outcomes.get(invoiceId);
+    const originalView = decisionViews.get(invoiceId);
+    if (!target || !original || !originalView) return null;
+
+    const company = buildCompany(officialPolicy, reference);
+    for (const id of order) {
+      if (id === invoiceId) break;
+      const rec = records.get(id);
+      if (!rec) continue;
+      const outcome = decide(ctxFor(rec, company));
+      const stored = approvalsById.get(id);
+      if (stored?.kind === "approved") {
+        const verified = guardian.guard({
+          decision_id: `dec_${id}`,
+          outcome: { ...outcome, decision: "PAGAR" },
+          policy: company.policy,
+          extractionValidated: true,
+          approval: stored.approval,
+          beneficiary_id: rec.supplierId,
+          origin: "approval",
+          now
+        }).verified;
+        if (verified) commitLedgerEntry(company, rec, outcome);
+      } else if (outcome.decision === "PAGAR") {
+        commitLedgerEntry(company, rec, outcome);
+      }
+    }
+
+    const replayed = decide(ctxFor(target, company));
+    const deterministic =
+      replayed.decision === original.decision &&
+      replayed.context_snapshot_hash === original.context_snapshot_hash &&
+      JSON.stringify(replayed.rules) === JSON.stringify(original.rules);
+
+    return {
+      ok: true,
+      invoiceId,
+      deterministic,
+      original: {
+        decision: toOfficialDecision(original.decision),
+        contextSnapshotHash: original.context_snapshot_hash
+      },
+      replayed: {
+        decision: toOfficialDecision(replayed.decision),
+        contextSnapshotHash: replayed.context_snapshot_hash
+      }
+    };
+  }
+
+  function getAudit(): AuditReport {
+    ensure();
+    let prevHash = AUDIT_GENESIS;
+    let brokenAt: number | null = null;
+    for (const event of auditEvents) {
+      const expected = auditHash(prevHash, event.payload);
+      if (event.prevHash !== prevHash || event.hash !== expected) {
+        brokenAt = event.seq;
+        break;
+      }
+      prevHash = event.hash;
+    }
+    return { valid: brokenAt === null, checked: auditEvents.length, brokenAt, events: auditEvents };
+  }
+
   return {
     getRun: () => ensure(),
     getLastRun: () => ensure(),
@@ -775,7 +954,16 @@ export function createPipeline(options: PipelineOptions = {}): Pipeline {
     reject,
     getMetrics: () => ensure().metrics,
     ingest,
-    reset
+    reset,
+    getPolicy: () => ({ official: officialPolicy, engine: buildCompany(officialPolicy, reference).policy }),
+    getApprovals: () => {
+      ensure();
+      return [...decisionViews.values()].filter(
+        (d) => d.decision === "ESCALATE" && d.status === "PENDING_HUMAN_APPROVAL"
+      );
+    },
+    replayDecision,
+    getAudit
   };
 }
 

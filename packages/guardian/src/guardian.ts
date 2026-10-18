@@ -43,6 +43,30 @@ export interface GuardianOptions {
   secret?: string;
 }
 
+/**
+ * Secreto por defecto SOLO para desarrollo/demo. Es publico: en produccion hay
+ * que definir GUARDIAN_HMAC_SECRET o las firmas son falsificables por cualquiera.
+ */
+export const DEV_FALLBACK_SECRET = "acme-eval-secret";
+
+let warnedFallback = false;
+
+function resolveSecret(explicit?: string): string {
+  const secret = explicit ?? process.env.GUARDIAN_HMAC_SECRET;
+  if (secret && secret.length > 0) return secret;
+  if (!warnedFallback) {
+    warnedFallback = true;
+    console.warn(
+      "[guardian] AVISO: usando el secreto HMAC de desarrollo. " +
+      "Defina GUARDIAN_HMAC_SECRET en produccion; de lo contrario las autorizaciones son falsificables."
+    );
+  }
+  if (process.env.GUARDIAN_REQUIRE_SECRET === "1" || process.env.GUARDIAN_REQUIRE_SECRET === "true") {
+    throw new Error("GUARDIAN_HMAC_SECRET es obligatorio (GUARDIAN_REQUIRE_SECRET activo).");
+  }
+  return DEV_FALLBACK_SECRET;
+}
+
 /** Degrada una decision para que nunca pueda quedarse en PAGAR tras una discrepancia. */
 function degrade(decision: Decision): Decision {
   return decision === "PAGAR" ? "ESCALAR" : decision;
@@ -108,7 +132,7 @@ function checkInvariants(input: GuardianInput): GuardianAlert[] {
 }
 
 export function createGuardian(options: GuardianOptions = {}): Guardian {
-  const secret = options.secret ?? process.env.GUARDIAN_HMAC_SECRET ?? "dev-guardian-secret";
+  const secret = resolveSecret(options.secret);
 
   function issueAuthorization(input: GuardianInput): PaymentAuthorization {
     const payload = {

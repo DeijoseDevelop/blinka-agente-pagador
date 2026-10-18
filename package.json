@@ -13,7 +13,7 @@
     "apps/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck -w @agente/api && npm run typecheck -w @agente/web",
     "test": "vitest run",
     "test:watch": "vitest",
     "hash:pdfs": "tsx scripts/hash-pdfs.ts",

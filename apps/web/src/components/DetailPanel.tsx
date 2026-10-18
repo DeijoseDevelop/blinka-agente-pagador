@@ -130,6 +130,7 @@ export const DetailPanel: FC<Props> = ({ decision, copy, onClose, onChanged, onE
 
         {showApproval && (
           <ApprovalPanel
+            key={decision.invoiceId}
             decision={decision}
             roleOptions={ui.approval.roleOptions}
             commentPlaceholder={ui.approval.commentPlaceholder}

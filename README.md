@@ -52,7 +52,7 @@ Blinka/
 ## 📊 Métricas de evaluación (Benchmark M1–M6)
 
 | Métrica | Definición | Resultado reportado |
-|---|---|---|
+| --- | --- | --- |
 | **M1** | Autonomía: facturas pagadas sin intervención humana | 33,3 % (N=3) |
 | **M2** | Pagos inseguros | 0,0 % (N=3) |
 | **M3** | Sobre-escalamiento indebido | 0,0 % (N=3) |
@@ -64,7 +64,32 @@ Blinka/
 
 ---
 
-## 🚀 Puesta en marcha local
+## � API REST
+
+La API es la única vía de autorización: el frontend solo la consume y nunca puede fabricar una firma.
+
+| Método | Ruta | Descripción |
+| --- | --- | --- |
+| `GET` | `/api/health` | Estado del servicio (`simulationOnly: true`). |
+| `GET` | `/api/run` | Última corrida del pipeline (decisiones, métricas, oráculo). |
+| `GET` | `/api/decisions` | Lista de decisiones del run vigente. |
+| `GET` | `/api/decisions/:id` | Detalle de una decisión (reglas, hallazgos, narrativa, firmas). |
+| `POST` | `/api/decisions/:id/replay` | Re-evalúa con el snapshot guardado y verifica determinismo. |
+| `POST` | `/api/invoices` | Ingesta una factura (`text`, o `contentBase64` + `fileName`/`mime`). |
+| `GET` | `/api/approvals` | Cola humana: facturas escaladas pendientes de resolución. |
+| `POST` | `/api/approvals/:id/approve` | Aprueba una escalada (`role`, `comment`). Re-evalúa antes de firmar. |
+| `POST` | `/api/approvals/:id/reject` | Rechaza una escalada (`comment`). |
+| `GET` | `/api/policy` | Política oficial + límites efectivos del motor. |
+| `GET` | `/api/audit/verify` | Verifica la cadena de auditoría encadenada por hash. |
+| `POST` | `/api/eval/run` | Ejecuta el benchmark contra el oráculo (M1–M6). |
+| `POST` | `/api/reset` | Restaura el estado de demostración. |
+| `GET` | `/api/copy` | Microcopys de la interfaz. |
+
+**Controles de seguridad:** límite de body de 8 MiB, validación de firmas de contenido (PDF/imagen) más allá del MIME declarado, detección de inyección de prompts en el texto, errores 5xx sin trazas internas, CORS restringido (ver `CORS_ORIGIN`), gate opcional `x-approvals-token` para la cola humana y cadena de auditoría append-only verificable.
+
+---
+
+## �🚀 Puesta en marcha local
 
 ### Prerrequisitos
 
@@ -125,7 +150,7 @@ El monorepo se despliega como **un solo servicio**: la API (Fastify) sirve tanto
 Config efectiva (de `railway.toml`, no hace falta tocarla):
 
 | Etapa | Comando |
-|---|---|
+| --- | --- |
 | Build | `npm run build:web` (compila el frontend a `apps/web/dist`) |
 | Start | `npm run start:api` (sirve API + frontend en `$PORT`) |
 | Healthcheck | `/api/health` |
@@ -133,10 +158,12 @@ Config efectiva (de `railway.toml`, no hace falta tocarla):
 ### Variables de entorno
 
 | Variable | Descripción |
-|---|---|
+| --- | --- |
 | `PORT` | Puerto de escucha. **Lo inyecta Railway automáticamente**; no lo definas. |
 | `GUARDIAN_HMAC_SECRET` | Secreto HMAC-SHA256 del Guardián. Sin definir usa `acme-eval-secret` (solo demo). |
-| `CORS_ORIGIN` | Orígenes permitidos separados por coma. Sin definir refleja cualquier origen (mismo origen no lo necesita). |
+| `GUARDIAN_REQUIRE_SECRET` | `1` exige `GUARDIAN_HMAC_SECRET` definido o el Guardián falla al iniciar. Recomendado en producción. |
+| `CORS_ORIGIN` | Orígenes permitidos separados por coma. Sin definir solo permite los orígenes locales de Vite (`localhost:5173`); nunca refleja orígenes arbitrarios. |
+| `APPROVALS_TOKEN` | Si está definido, aprobar/rechazar exige el header `x-approvals-token` (separación de funciones mínima). |
 
 Consulta `.env.example` para la lista completa. La versión de Node queda fijada en 22.x vía `engines` y `.nvmrc`.
 

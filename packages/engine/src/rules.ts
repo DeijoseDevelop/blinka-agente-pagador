@@ -238,7 +238,13 @@ const R08: RuleDefinition = {
         evidence: `Sin presupuesto definido para categoria '${category ?? "desconocida"}' en ${period}`
       };
     }
-    const remaining = new Decimal(budget.limit).sub(budget.spent);
+    // Comprometido = `spent` previo + asientos del libro de esta categoria en el
+    // periodo (los pagos/reservas de la sesion tambien consumen presupuesto).
+    // En los asientos de sesion `concept` transporta la categoria presupuestal.
+    const sessionCommitted = ctx.company.ledger
+      .filter((e) => periodKey(e.date) === period && e.concept === category)
+      .reduce((acc, e) => acc.add(e.amount_base_usd), new Decimal(0));
+    const remaining = new Decimal(budget.limit).sub(budget.spent).sub(sessionCommitted);
     const need = baseAmountOf(ctx).money.amount;
     if (need.gt(remaining)) {
       return {
@@ -310,7 +316,7 @@ const R10: RuleDefinition = {
   defaultOnFail: "ESCALAR",
   waivable: true,
   evaluate(ctx) {
-    const { agreement } = findAgreement(ctx);
+    const { agreement, referenceMissing } = findAgreement(ctx);
     const target = baseAmountOf(ctx).money;
 
     if (!agreement) {
@@ -318,7 +324,9 @@ const R10: RuleDefinition = {
         status: "FAIL",
         on_fail: "ESCALAR",
         waivable: true,
-        evidence: "Cobro legitimo sin acuerdo comercial registrado (requiere aprobacion humana)"
+        evidence: referenceMissing
+          ? `El acuerdo referenciado '${ctx.invoice.agreement_ref}' no existe en el registro`
+          : "Cobro legitimo sin acuerdo comercial registrado (requiere aprobacion humana)"
       };
     }
 
@@ -393,6 +401,24 @@ const R11: RuleDefinition = {
   }
 };
 
+/**
+ * Fecha ISO estricta y real: formato YYYY-MM-DD y valor de calendario valido.
+ * "2026-02-30" o "99/99/2026" no son fechas: Date.parse es tolerante y produciria
+ * NaN o fechas enrolladas, lo que antes dejaba pasar la regla (NaN > x === false).
+ */
+export function isValidISODate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const parsed = new Date(Date.UTC(y, m - 1, d));
+  return (
+    parsed.getUTCFullYear() === y && parsed.getUTCMonth() === m - 1 && parsed.getUTCDate() === d
+  );
+}
+
 /* --------------------------- R12 --------------------------- */
 const R12: RuleDefinition = {
   id: "R12",
@@ -402,6 +428,18 @@ const R12: RuleDefinition = {
   evaluate(ctx) {
     const inv = ctx.invoice;
     if (!inv.issue_date) return { status: "UNKNOWN", evidence: "Sin fecha de emision (ver R01)" };
+    if (!isValidISODate(inv.issue_date)) {
+      return {
+        status: "UNKNOWN",
+        evidence: `Fecha de emision no valida: '${inv.issue_date}'`
+      };
+    }
+    if (inv.due_date && !isValidISODate(inv.due_date)) {
+      return {
+        status: "UNKNOWN",
+        evidence: `Fecha de vencimiento no valida: '${inv.due_date}'`
+      };
+    }
 
     if (Date.parse(inv.issue_date) > Date.parse(ctx.now) + FUTURE_TOLERANCE_DAYS * DAY_MS) {
       return { status: "FAIL", on_fail: "ESCALAR", waivable: true, evidence: `Emitida a futuro: ${inv.issue_date}` };

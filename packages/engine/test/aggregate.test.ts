@@ -30,7 +30,7 @@ describe("agregador fail-closed", () => {
   it("hallazgo de IA ESCALAR no puede producir PAGAR", () => {
     const allPass = RULES.map((r) => res(r.id, "PASS"));
     const findings: Finding[] = [
-      { kind: "ambiguity", suggested_on_fail: "ESCALAR", confidence: 0.9, rationale: "x", evidence_refs: [] }
+      { kind: "ambiguity", suggested_on_fail: "ESCALAR", confidence: 0.9, rationale: "x", evidence_refs: ["amount.total"] }
     ];
     expect(aggregate(allPass, findings).decision).toBe("ESCALAR");
   });
@@ -38,10 +38,18 @@ describe("agregador fail-closed", () => {
   it("hallazgo de IA solo endurece la decision (monotonia)", () => {
     const allPass = RULES.map((r) => res(r.id, "PASS"));
     const findings: Finding[] = [
-      { kind: "fraud", suggested_on_fail: "FRENAR", confidence: 0.8, rationale: "y", evidence_refs: [] }
+      { kind: "fraud", suggested_on_fail: "FRENAR", confidence: 0.8, rationale: "y", evidence_refs: ["payee.name"] }
     ];
     expect(aggregate(allPass, findings).decision).toBe("FRENAR");
     expect(aggregate(allPass).decision).toBe("PAGAR");
+  });
+
+  it("descarta hallazgos sin evidencia citable (doc §8)", () => {
+    const allPass = RULES.map((r) => res(r.id, "PASS"));
+    const findings: Finding[] = [
+      { kind: "gossip", suggested_on_fail: "FRENAR", confidence: 1, rationale: "sin evidencia", evidence_refs: [] }
+    ];
+    expect(aggregate(allPass, findings).decision).toBe("PAGAR");
   });
 
   it("mostRestrictive respeta PAGAR < ESCALAR < FRENAR", () => {

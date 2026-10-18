@@ -38,6 +38,9 @@ export function aggregate(
   }
 
   for (const finding of findings) {
+    // Un hallazgo sin evidencia citable se descarta (documento §8): la IA debe
+    // poder señalar donde esta el problema, no solo afirmar que existe.
+    if (finding.evidence_refs.length === 0) continue;
     sources.push({
       source: `finding:${finding.kind}`,
       decision: finding.suggested_on_fail,

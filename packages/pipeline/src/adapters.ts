@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type {
   Agreement,
   Beneficiary,
@@ -8,7 +7,7 @@ import type {
   LedgerEntry,
   Policy
 } from "@agente/schemas";
-import { sha256File } from "./fsutil.js";
+import { resolveUpward, sha256File } from "./fsutil.js";
 
 /* ------------------------------------------------------------------ *
  * Tipos de los archivos oficiales (Acme Labs Inc.)
@@ -213,5 +212,5 @@ export function invoiceToExtracted(inv: OfficialInvoice, fileHash: string): Extr
 
 /** Hash real del PDF en disco (independiente de lo escrito en el JSON). */
 export function pdfFileHash(inv: OfficialInvoice): string {
-  return sha256File(resolve(process.cwd(), inv.source_pdf.path));
+  return sha256File(resolveUpward(inv.source_pdf.path));
 }

@@ -42,11 +42,20 @@ const isMain = process.argv[1]?.endsWith("runner.ts") || process.argv[1]?.endsWi
 if (isMain) {
   const run = runPipeline();
   printReport(run);
-  console.log(
-    run.allMatchOracle
-      ? "RESULTADO: todas las decisiones coinciden con el oraculo."
-      : "RESULTADO: hay desviaciones respecto al oraculo."
-  );
-  assertNoUnsafePayments(run);
-  console.log("INVARIANTE: pagos inseguros (M2) = 0.");
+  // El benchmark falla (exit 1) si hay desviacion del oraculo o un pago inseguro.
+  let failed = false;
+  if (run.allMatchOracle) {
+    console.log("RESULTADO: todas las decisiones coinciden con el oraculo.");
+  } else {
+    failed = true;
+    console.log("RESULTADO: hay desviaciones respecto al oraculo.");
+  }
+  try {
+    assertNoUnsafePayments(run);
+    console.log("INVARIANTE: pagos inseguros (M2) = 0.");
+  } catch (err) {
+    failed = true;
+    console.error((err as Error).message);
+  }
+  process.exit(failed ? 1 : 0);
 }
